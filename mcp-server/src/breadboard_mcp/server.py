@@ -262,7 +262,48 @@ def event_csv(instance_id: int) -> str:
 
 # --------------------------------------------------------------------- entry
 
+def _print_claude_config() -> None:
+    """Print a JSON block ready to paste into ~/.claude.json. The `command`
+    field is filled with the absolute path of this script's installed entry
+    point (resolved from sys.argv[0]), so it works whether the user
+    installed via venv/pip, pipx, uv, etc."""
+    import sys
+    from pathlib import Path
+
+    script = str(Path(sys.argv[0]).resolve())
+    config = {
+        "mcpServers": {
+            "breadboard": {
+                "command": script,
+                "env": {
+                    "BREADBOARD_URL": "http://localhost:9000",
+                    "BREADBOARD_EMAIL": "admin@example.com",
+                    "BREADBOARD_PASSWORD": "...",
+                },
+            }
+        }
+    }
+    sys.stderr.write(
+        "# Paste this into ~/.claude.json (or merge with existing mcpServers).\n"
+        "# Set BREADBOARD_EMAIL / BREADBOARD_PASSWORD to your admin credentials.\n"
+    )
+    print(json.dumps(config, indent=2))
+
+
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser(prog="breadboard-mcp", add_help=True)
+    parser.add_argument(
+        "--print-claude-config",
+        action="store_true",
+        help="Print a JSON block ready to paste into ~/.claude.json and exit.",
+    )
+    args = parser.parse_args()
+
+    if args.print_claude_config:
+        _print_claude_config()
+        return
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",

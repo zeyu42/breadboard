@@ -27,7 +27,7 @@ This MCP server talks to a small set of `/debug/*` HTTP endpoints added to
 Breadboard on this branch (`app/controllers/DebugController.java` + new
 routes). You **must** be running a build that contains those changes; see
 [`DEV_NOTES.md`](./DEV_NOTES.md) for the working build/run recipe (Java 8,
-`-noverify`, `sbt stage` + staged binary, etc.).
+`sbt stage` + staged binary, etc.).
 
 ## Tools (18)
 
@@ -70,10 +70,28 @@ way you'd treat typing into the Scriptboard.
 
 ## Installation
 
+Requires Python 3.10+. Install into a venv with pip:
+
 ```bash
 cd mcp-server
-uv sync
+python -m venv .venv
 ```
+
+Activate the venv:
+
+```bash
+source .venv/bin/activate          # macOS / Linux
+.venv\Scripts\activate             # Windows (cmd)
+.venv\Scripts\Activate.ps1         # Windows (PowerShell)
+```
+
+Then install:
+
+```bash
+pip install -e .
+```
+
+With the venv activated, the `breadboard-mcp` command is now available.
 
 ## Configuration
 
@@ -91,31 +109,42 @@ The server authenticates via `POST /debug/login` (JSON), not the legacy
 
 ## Running
 
-Standalone (stdio transport — the default MCP transport):
+Standalone (stdio transport — the default MCP transport, mainly useful as
+a sanity check that `breadboard-mcp` is on PATH):
 
 ```bash
-uv run breadboard-mcp
+breadboard-mcp
 ```
 
 ## Wiring it into Claude Code
 
-Add the server to your Claude Code MCP config (`~/.claude.json` or via
-`claude mcp add`):
+Claude Code launches MCP servers from a context with no active venv, so the
+config has to point at the venv's `breadboard-mcp` binary by absolute path.
+There are two equivalent ways to set that up.
+
+### Option B (recommended): use `--print-claude-config`
+
+With the venv activated, run:
+
+```bash
+breadboard-mcp --print-claude-config
+```
+
+This prints a JSON block with the absolute path to the installed binary
+already filled in. Paste it into `~/.claude.json` (or merge it with your
+existing `mcpServers` section), then edit the `env` values to match your
+admin credentials.
+
+Example output:
 
 ```json
 {
   "mcpServers": {
     "breadboard": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "/absolute/path/to/breadboard/mcp-server",
-        "run",
-        "breadboard-mcp"
-      ],
+      "command": "/absolute/path/to/breadboard/mcp-server/.venv/bin/breadboard-mcp",
       "env": {
         "BREADBOARD_URL": "http://localhost:9000",
-        "BREADBOARD_EMAIL": "you@example.com",
+        "BREADBOARD_EMAIL": "admin@example.com",
         "BREADBOARD_PASSWORD": "..."
       }
     }
@@ -123,8 +152,34 @@ Add the server to your Claude Code MCP config (`~/.claude.json` or via
 }
 ```
 
-Restart Claude Code. The 18 tools above appear under the `breadboard` MCP
-server.
+On Windows the `command` ends in `.venv\Scripts\breadboard-mcp.exe` —
+`--print-claude-config` handles that automatically.
+
+### Option C: use the Claude Code CLI
+
+If you have the `claude` CLI installed, no manual JSON editing is needed.
+With the venv activated:
+
+macOS / Linux:
+
+```bash
+claude mcp add breadboard "$(which breadboard-mcp)" \
+  --env BREADBOARD_URL=http://localhost:9000 \
+  --env BREADBOARD_EMAIL=admin@example.com \
+  --env BREADBOARD_PASSWORD=changeme
+```
+
+Windows (PowerShell):
+
+```powershell
+claude mcp add breadboard (Get-Command breadboard-mcp).Source `
+  --env BREADBOARD_URL=http://localhost:9000 `
+  --env BREADBOARD_EMAIL=admin@example.com `
+  --env BREADBOARD_PASSWORD=changeme
+```
+
+After either option, restart Claude Code. The 18 tools above appear under
+the `breadboard` MCP server.
 
 ## Typical debugging flow
 
