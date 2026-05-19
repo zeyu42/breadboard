@@ -684,6 +684,17 @@ public class ExperimentController extends Controller {
     ArrayList<Step> returnSteps = new ArrayList<>();
     File[] stepFiles = stepsDirectory.listFiles();
     if (stepFiles != null) {
+      // Sort by filename so step files load in the documented alphabetical
+      // order (00, 0, A...Z). Without this the load order depends on the
+      // underlying filesystem (often inode/creation-time on Linux, arbitrary
+      // on macOS), and steps that reference classes defined in earlier files
+      // (e.g. OnJoinStep referencing TreatmentManager from
+      // 0TreatmentManager.groovy) fail to resolve.
+      java.util.Arrays.sort(stepFiles, new java.util.Comparator<File>() {
+        @Override public int compare(File a, File b) {
+          return a.getName().compareTo(b.getName());
+        }
+      });
       for (File stepFile : stepFiles) {
         if(FilenameUtils.getExtension(stepFile.getName()).equals("groovy")) {
           Step step = new Step();

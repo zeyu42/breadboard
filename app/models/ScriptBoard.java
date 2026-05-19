@@ -720,10 +720,56 @@ public class ScriptBoard extends UntypedActor {
     out.write(jsonOutput);
   }
 
+  /**
+   * Synchronously evaluate a script against the shared engine and return the
+   * result as a JSON object with "output" and "error" fields. Used by the MCP
+   * debug HTTP endpoint so it can return results without going through a
+   * WebSocket. Engine bindings (g, a, c, events, ...) reflect whatever
+   * experiment instance is currently loaded in the engine.
+   */
+  public static ObjectNode processScriptSync(String script) {
+    ObjectNode jsonOutput = Json.newObject();
+    if (engine == null) {
+      jsonOutput.put("error", "Script engine is not initialized.");
+      jsonOutput.put("output", "");
+      return jsonOutput;
+    }
+    try {
+      Object outputObject;
+      synchronized (ScriptBoard.class) {
+        outputObject = engine.eval(script);
+      }
+      String outputString = script.trim().concat("\n\n==>");
+      if (outputObject != null) {
+        if (outputObject instanceof GremlinGroovyPipeline) {
+          outputString += StringUtils.join(((GremlinGroovyPipeline) outputObject).toList(), "\n==>");
+        } else {
+          outputString += outputObject.toString();
+        }
+      }
+      jsonOutput.put("output", outputString.trim());
+      jsonOutput.put("error", "");
+    } catch (CompilationFailedException cfe) {
+      jsonOutput.put("output", "");
+      jsonOutput.put("error", "Caught error: " + cfe.getMessage());
+    } catch (ScriptException se) {
+      jsonOutput.put("output", "");
+      jsonOutput.put("error", "Caught error: " + se.getMessage());
+    } catch (Exception e) {
+      jsonOutput.put("output", "");
+      jsonOutput.put("error", "Caught error: " + e.getMessage());
+    }
+    return jsonOutput;
+  }
+
   public static void processScript(String script, ThrottledWebSocketOut out, String scriptName) {
     if (scriptName == null) scriptName = "Unnamed Script";
 
     ObjectNode jsonOutput = Json.newObject();
+    // Tag the message with the script name so MCP-driven debugging can map
+    // an error back to the originating step file (Groovy's internal
+    // "Script##.groovy" name is opaque on its own).
+    jsonOutput.put("scriptName", scriptName);
     //TODO: better way to handle this?
     boolean initStep = false;
     synchronized (ScriptBoard.class) {

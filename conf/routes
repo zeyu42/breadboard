@@ -92,6 +92,23 @@ GET         /logout                                                             
 
 POST        /saveUserSettings                                                    controllers.Application.saveUserSettings()
 
+# MCP debug endpoints (read-only experiment/instance/event inspection + sync script eval)
+POST        /debug/login                                                         controllers.DebugController.login()
+GET         /debug/experiments                                                   controllers.DebugController.listExperiments()
+GET         /debug/experiments/:experimentId                                     controllers.DebugController.getExperiment(experimentId: Long)
+GET         /debug/experiments/:experimentId/instances                           controllers.DebugController.listInstances(experimentId: Long)
+GET         /debug/instances/:instanceId                                         controllers.DebugController.getInstance(instanceId: Long)
+GET         /debug/instances/:instanceId/events                                  controllers.DebugController.getInstanceEvents(instanceId: Long)
+GET         /debug/selection                                                     controllers.DebugController.getCurrentSelection()
+POST        /debug/selection/experiment                                          controllers.DebugController.setSelectedExperiment()
+GET         /debug/experiments/:experimentId/paths                               controllers.DebugController.getExperimentPaths(experimentId: Long)
+POST        /debug/experiments/:experimentId/file-mode                           controllers.DebugController.setFileMode(experimentId: Long)
+POST        /debug/select-experiment                                             controllers.DebugController.selectExperiment()
+POST        /debug/launch-game                                                   controllers.DebugController.launchGame()
+POST        /debug/select-instance                                               controllers.DebugController.selectInstance()
+POST        /debug/stop-game                                                     controllers.DebugController.stopGame()
+POST        /debug/script                                                        controllers.DebugController.executeScript()
+
 # Map static resources from the /public folder to the /assets URL path
 GET         /assets/*file                                                        controllers.Assets.at(path="/public", file)
 

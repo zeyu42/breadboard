@@ -30,3 +30,17 @@ Also [Apache Commons](https://commons.apache.org/), [imgscalr](https://github.co
 
 ### Contributing
 See the [contributing guide](CONTRIBUTING.md)
+
+### MCP server (this branch)
+
+This branch adds an [MCP](https://modelcontextprotocol.io) server that lets
+an LLM agent (e.g. Claude in Claude Code) build, run, and debug Breadboard
+experiments through HTTP+JSON — no UI clicking, no `npm run serve` watcher.
+It also includes a couple of small fixes in `app/` needed to support that
+workflow (deterministic step file ordering, a `file_mode` db evolution).
+
+See **[`mcp-server/README.md`](mcp-server/README.md)** for the tool list
+and usage, and **[`mcp-server/DEV_NOTES.md`](mcp-server/DEV_NOTES.md)** for
+the working build/run recipe on modern macOS (sbt 0.13.18 + Java 8 +
+staged binary; `./start` from the original README does not work without
+the `play` activator).

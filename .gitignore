@@ -36,3 +36,8 @@ csv
 
 .vscode
 generated
+
+# MCP server / dev artifacts
+RUNNING_PID
+hs_err_pid*.log
+data

@@ -66,6 +66,7 @@ public class Experiment extends Model {
   public List<Language> languages = new ArrayList<>();
 
   public static final Long TEST_INSTANCE_ID = 0L;
+  @javax.persistence.Transient
   public ExperimentInstance TEST_INSTANCE = null;
 
   // The AMT QualificationTypeId for the Previous Worker qualification specific to this experiment type.
