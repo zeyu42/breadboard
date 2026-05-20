@@ -20,9 +20,9 @@ The agent can:
   `npm run serve` runs in template projects like
   [`breadboard-v2.4-default`](https://github.com/human-nature-lab/breadboard-v2.4-default).
 - **Launch** an `ExperimentInstance` and **bind the script engine** to it,
-  so every Step's `run` / `done` closure, every helper class
-  (e.g. `TreatmentManager`), and runtime bindings (`g`, `a`, `c`,
-  `events`, ...) are live.
+  so every Step's `run` / `done` closure, every helper class loaded by
+  your experiment, and runtime bindings (`g`, `a`, `c`, `events`, ...)
+  are live.
 - **Evaluate Groovy** against the live engine — the same engine the in-app
   Scriptboard uses.
 - **Inspect** experiments, instances, the event log, and the CSV exports.
@@ -186,7 +186,7 @@ Claude Code launches MCP servers from a context with no active venv, so the
 config has to point at the venv's `breadboard-mcp` binary by absolute path.
 There are two equivalent ways to set that up.
 
-### Option B (recommended): use `--print-claude-config`
+### Option 1 (recommended): use `--print-claude-config`
 
 With the venv activated, run:
 
@@ -219,7 +219,7 @@ Example output:
 On Windows the `command` ends in `.venv\Scripts\breadboard-mcp.exe` —
 `--print-claude-config` handles that automatically.
 
-### Option C: use the Claude Code CLI
+### Option 2: use the Claude Code CLI
 
 If you have the `claude` CLI installed, no manual JSON editing is needed.
 With the venv activated:
@@ -242,7 +242,7 @@ claude mcp add breadboard (Get-Command breadboard-mcp).Source `
   --env BREADBOARD_PASSWORD=changeme
 ```
 
-After either option, restart Claude Code. The 18 tools above appear under
+After either option, restart Claude Code. The 25 tools above appear under
 the `breadboard` MCP server.
 
 ## Typical debugging flow

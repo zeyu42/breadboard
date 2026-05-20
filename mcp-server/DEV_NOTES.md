@@ -295,11 +295,9 @@ happens to match alphabetical order for files dropped by webpack's
 `CopyPlugin` (it processes input files alphabetically). On macOS APFS it's
 arbitrary. On any filesystem after `rsync` or `cp`, it's arbitrary.
 
-The result: cross-step class references break. In the
-[two-door experiment](https://github.com/human-nature-lab/two-door-trust-game-main),
-`OnJoinStep.groovy` references `TreatmentManager` (defined in
-`0TreatmentManager.groovy`). When the files load out of order, Groovy
-errors with `unable to resolve class TreatmentManager`.
+The result: cross-step class references break. If `OnJoinStep.groovy`
+references a class `Foo` defined in `0Foo.groovy`, loading the files out
+of order causes Groovy to error with `unable to resolve class Foo`.
 
 **Fix:** sort `stepFiles` by name before iterating. Trivial 4-line patch.
 
@@ -419,7 +417,7 @@ Expected output (trimmed) for an experiment id 41 named `TwoDoorTrustGame`:
 
 # 5. get_experiment(41) — steps loaded from disk
   fileMode: True
-  steps: ['00Log', '00Utils', '0Globals', '0TreatmentManager',
+  steps: ['00Log', '00Utils', '0Globals', '0Helpers',
           '0WaitGroup', '0WaitingRoom', 'Game', 'InitStep',
           'OnJoinStep', 'OnLeaveStep', 'SurveyStep']
 
@@ -439,7 +437,7 @@ Expected output (trimmed) for an experiment id 41 named `TwoDoorTrustGame`:
 ```
 
 At this point the engine has every closure registered, every helper class
-loaded (`TreatmentManager`, `WaitingRoom`, etc.), and an empty in-memory
+loaded by the experiment (e.g. `WaitingRoom`), and an empty in-memory
 graph. From Claude Code, the agent can now run arbitrary Groovy against
 this state.
 
