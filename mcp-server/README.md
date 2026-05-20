@@ -258,6 +258,13 @@ the `breadboard` MCP server.
    - *"In instance 47, what were the last 50 events with 'Choice' in the
      name?"* → `get_instance_events(47, 50, 0, "Choice")`
 
+## Simulating players
+
+See [`examples/simulate_players.py`](./examples/simulate_players.py) for
+a minimal, experiment-agnostic player simulator template, plus
+[`examples/README.md`](./examples/README.md) for the workflow to extend
+it for your experiment.
+
 ## Limitations
 
 - **No browser.** The MCP drives the server, not the Vue client. If you
