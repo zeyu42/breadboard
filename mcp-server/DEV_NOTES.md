@@ -118,6 +118,24 @@ Spawn mode always needs the flag on, so the MCP spawner forces it via
 Breadboard themselves must enable it in their own `application.conf`,
 pass the same `-D` flag, or export `MCP_ENABLED=true`.
 
+**Scope of the guarantee.** The gate prevents *accidental* exposure of
+the debug surface on a deploy that didn't intend to expose it. It is
+not a production-hardening feature. With `mcp.enabled=true`:
+
+- Authentication is the unchanged `Secured` / `Security.Authenticator`
+  cookie flow. The spawn-mode default credentials
+  (`admin@example.com` / `admin123`) live only inside the per-session
+  ephemeral H2 DB and never escape that workdir, but the same admin
+  account on a long-lived Breadboard is one weak-password guess away
+  from arbitrary Groovy execution via `/debug/script`.
+- There's no IP/loopback restriction; if the Breadboard JVM is bound to
+  a public interface, `/debug/*` is reachable from the network.
+- There's no TLS, no rate-limiting, and no audit logging beyond
+  Breadboard's existing event log.
+
+Treat `mcp.enabled=true` as a local-machine-only setting. Don't expose
+a Breadboard that has it on to anything you don't trust.
+
 ### Why we need `/debug/bootstrap-schema`
 
 Evolution 28.sql creates an empty `breadboard_version` table. `Global.onStart`
@@ -173,6 +191,29 @@ require admin/Developer-Mode privilege. The directories are small
 but the snapshot is frozen: mid-session edits to the source aren't
 reflected until the spawn is terminated and respawned. Add more
 directories here only when an experiment is observed to need them.
+
+### Cross-platform behavior
+
+macOS and Linux are first-class. Windows works with two spawner
+differences; functionally everything else is the same.
+
+| Aspect | macOS / Linux | Windows |
+|---|---|---|
+| Staged binary | `target/universal/stage/bin/breadboard` (Unix shell script) | `target/universal/stage/bin/breadboard.bat` (auto-detected) |
+| `groovy/` & `data/` linkage | `os.symlink` — live edits picked up on next reload | `shutil.copytree` — frozen snapshot at spawn time (Windows symlinks need admin or Developer Mode; junctions would work without elevation but require shelling out to `mklink /J`. The dirs are tiny — ~130 KB on the default install) |
+| `terminate_breadboard()` | SIGTERM → wait 10s → SIGKILL | `TerminateProcess` (already a hard kill) |
+| `cleanup_orphans()` | SIGTERM → wait → SIGKILL | `TerminateProcess` (single step) |
+
+If `data/` grows large (multi-MB CSVs) and you spawn often on Windows,
+set `BREADBOARD_MCP_SESSION_DIR` to a fast SSD location to keep the
+per-spawn copy cheap.
+
+### Spawn-mode env overrides
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BREADBOARD_STAGED_BIN` | `<repo_root>/target/universal/stage/bin/breadboard[.bat]` | Path to the staged Breadboard launcher. |
+| `BREADBOARD_MCP_SESSION_DIR` | `~/.breadboard-mcp/sessions` | Parent dir for per-session workdirs. |
 
 ### Lifecycle
 
@@ -488,6 +529,33 @@ At this point the engine has every closure registered, every helper class
 loaded by the experiment (e.g. `WaitingRoom`), and an empty in-memory
 graph. From Claude Code, the agent can now run arbitrary Groovy against
 this state.
+
+## Alternate wiring: `claude mcp add`
+
+The README walks through `breadboard-mcp --print-claude-config` + manual
+JSON edit. If you have the `claude` CLI installed you can skip the
+manual edit entirely:
+
+macOS / Linux:
+
+```bash
+claude mcp add breadboard "$(which breadboard-mcp)" \
+  --env BREADBOARD_URL=http://localhost:9000 \
+  --env BREADBOARD_EMAIL=admin@example.com \
+  --env BREADBOARD_PASSWORD=changeme
+```
+
+Windows (PowerShell):
+
+```powershell
+claude mcp add breadboard (Get-Command breadboard-mcp).Source `
+  --env BREADBOARD_URL=http://localhost:9000 `
+  --env BREADBOARD_EMAIL=admin@example.com `
+  --env BREADBOARD_PASSWORD=changeme
+```
+
+Restart Claude Code afterward. The 25 tools then appear under the
+`breadboard` MCP server.
 
 ## File-mode dev directory caveat
 

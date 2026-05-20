@@ -1,150 +1,100 @@
 # Breadboard MCP server
 
-> **Do not use in production.** Spawn mode seeds a hard-coded default admin
-> (`admin@example.com` / `admin123`) into each session-private Breadboard, the
-> `/debug/*` endpoints are not hardened against untrusted callers, and the
-> spawned JVM binds locally without TLS. This MCP is intended for local
-> development and debugging only.
+> **Do not use in production.** This MCP exposes a Groovy-eval surface
+> (`/debug/script`), seeds hard-coded default admin credentials in spawn
+> mode (`admin@example.com` / `admin123`), and binds locally without TLS.
+> The `mcp.enabled` config flag keeps `/debug/*` 404'd by default, but
+> turning it on against a public Breadboard is unsafe regardless of the
+> flag — treat `mcp.enabled=true` as a local-machine-only setting. See
+> [`DEV_NOTES.md`](./DEV_NOTES.md) for the full threat model.
 
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM agent
-(e.g. Claude in Claude Code) **build, run, and debug Breadboard experiments
-through HTTP+JSON** — no clicking around the admin UI, no `npm run serve`.
+(e.g. Claude in Claude Code) **build, run, and debug Breadboard
+experiments through HTTP+JSON** — no clicking around the admin UI, no
+`npm run serve`.
 
 ## What it does
 
-The agent can:
-
-- **Create** a new experiment, toggle file-mode, and **sync a local
-  `backend/` directory** of Groovy steps + frontend assets into Breadboard's
-  `dev/<exp>/` folder. This replaces the webpack `CopyPlugin` that
-  `npm run serve` runs in template projects like
-  [`breadboard-v2.4-default`](https://github.com/human-nature-lab/breadboard-v2.4-default).
-- **Launch** an `ExperimentInstance` and **bind the script engine** to it,
-  so every Step's `run` / `done` closure, every helper class loaded by
-  your experiment, and runtime bindings (`g`, `a`, `c`, `events`, ...)
-  are live.
-- **Evaluate Groovy** against the live engine — the same engine the in-app
-  Scriptboard uses.
-- **Inspect** experiments, instances, the event log, and the CSV exports.
+- **Create** experiments, toggle file-mode, and **sync a local
+  `backend/`** into Breadboard's `dev/<exp>/` (the MCP equivalent of
+  `npm run serve` in the
+  [v2.4 template](https://github.com/human-nature-lab/breadboard-v2.4-default)).
+- **Launch** an `ExperimentInstance` and **bind the script engine** to
+  it; runtime bindings (`g`, `a`, `c`, `events`, ...) are live.
+- **Evaluate Groovy** against the live engine (same engine the
+  Scriptboard uses).
+- **Inspect** experiments, instances, the event log, and CSV exports.
 
 ## Server requirements
 
-This MCP server talks to a small set of `/debug/*` HTTP endpoints added to
-Breadboard on this branch (`app/controllers/DebugController.java` + new
-routes). You **must** be running a build that contains those changes; see
-[`DEV_NOTES.md`](./DEV_NOTES.md) for the working build/run recipe (Java 8,
-`sbt stage` + staged binary, etc.).
+Talks to `/debug/*` endpoints added on this branch
+(`app/controllers/DebugController.java` + new routes). You must run a
+build that contains those changes — see [`DEV_NOTES.md`](./DEV_NOTES.md)
+for the working build/run recipe (Java 8, `sbt stage` + staged binary).
 
-The `/debug/*` endpoints are gated by `mcp.enabled` (default **off**) so a
-production Breadboard never exposes them by accident. Spawn mode passes
-`-Dmcp.enabled=true` to the JVM automatically. **Attach mode requires you
-to enable it yourself** — either set `mcp.enabled = true` in
-`conf/application.conf`, or start Breadboard with `-Dmcp.enabled=true`, or
-export `MCP_ENABLED=true` in the env. If you don't, every `/debug/*` call
-returns 404.
+The endpoints are gated by `mcp.enabled` (default off). Spawn mode
+passes `-Dmcp.enabled=true` automatically. **Attach mode requires you
+to enable it** — set `mcp.enabled = true` in `conf/application.conf`,
+pass `-Dmcp.enabled=true` on the JVM, or export `MCP_ENABLED=true`.
 
 ## Two ways to use it
 
 | Mode | When | How |
 |---|---|---|
-| **Spawn** a session-private Breadboard | **Default.** First tool call auto-spawns a fresh JVM on a free port with its own H2 database. Best for parallel Claude Code sessions / worktrees that don't want to race on a shared server. | Either call `spawn_breadboard` explicitly, or just call any tool — the MCP auto-spawns transparently on first use. |
-| **Attach** to an existing Breadboard | You're already running a Breadboard (e.g. `./start`) and want the MCP to talk to it. | Call `attach_breadboard(url=...)`. With no `url` arg, the MCP looks for the Breadboard at the `BREADBOARD_URL` env var; if it responds, that becomes the attach target. Spawns are session-private — they're never auto-offered as attach candidates (each MCP owns its own). You can still attach to a spawn by passing its url explicitly. |
+| **Spawn** (default) | You want a fresh, private Breadboard per Claude session. | Auto-spawns on first tool call; or call `spawn_breadboard` explicitly. |
+| **Attach** | You already have a Breadboard running and want the MCP to talk to it. | `attach_breadboard(url=...)`. With no `url`, uses the `BREADBOARD_URL` env var if it responds. Attaches are exclusive (file-locked). |
 
 Precedence: explicit attach > current spawn > auto-spawn.
 
 ## Tools (25)
 
 ### Read-only inspection
-
 | Tool | Purpose |
 |---|---|
-| `list_experiments` | All experiments owned by the configured admin user |
-| `get_experiment(id)` | Full experiment: steps (with Groovy source), content, parameters, languages, instance stubs |
+| `list_experiments` | All experiments owned by the configured admin |
+| `get_experiment(id)` | Full experiment incl. step Groovy source |
 | `list_instances(experimentId)` | All runs of an experiment |
 | `get_instance(id)` | One instance (status, data, AMT hits) |
 | `get_instance_events(id, limit?, offset?, name_filter?)` | Paged event log |
-| `get_current_selection` | Which experiment + instance are currently bound to the script engine |
-| `get_experiment_paths(id)` | On-disk paths Breadboard uses for this experiment's `dev/` directory |
-| `instance_data_csv(experimentId)` | CSV of all instances of an experiment |
+| `get_current_selection` | What the engine is bound to |
+| `get_experiment_paths(id)` | On-disk paths Breadboard uses for `dev/` |
+| `instance_data_csv(experimentId)` | CSV of all instances |
 | `event_csv(instanceId)` | CSV of all events for one instance |
 
-### Mutating: experiment setup
-
+### Experiment setup
 | Tool | Purpose |
 |---|---|
-| `create_experiment(name, copy_experiment_id?)` | Create a new experiment |
-| `set_file_mode(id, enabled?)` | Toggle / set file-mode. When turning on, Breadboard exports the experiment into `dev/<dir>/` |
-| `sync_experiment_files(id, source_dir, public_root?, dev_mode?)` | Copy a local `backend/` directory into Breadboard's `dev/<dir>/`. Equivalent of `npm run serve` |
-| `set_selected_experiment(id)` | Set the admin user's selected experiment (lighter-weight than `select_experiment_for_engine`) |
+| `create_experiment(name, copy_experiment_id?)` | New experiment |
+| `set_file_mode(id, enabled?)` | Toggle / set file-mode |
+| `sync_experiment_files(id, source_dir, ...)` | Copy a local `backend/` into Breadboard (MCP equivalent of `npm run serve`) |
+| `set_selected_experiment(id)` | Set the admin's selected experiment |
 
-### Mutating: live engine lifecycle
-
+### Live engine
 | Tool | Purpose |
 |---|---|
-| `select_experiment_for_engine(id)` | **Rebuild the engine, load all Step sources.** Required before `launch_game` |
-| `launch_game(name, parameters?)` | Create + start an `ExperimentInstance`; runs each Step source into the engine so closures are registered |
-| `select_instance_for_engine(id)` | Bind the engine to an existing instance (e.g. after a restart) |
+| `select_experiment_for_engine(id)` | Rebuild the engine, load Step sources (required before `launch_game`) |
+| `launch_game(name, parameters?)` | Create + start an `ExperimentInstance` |
+| `select_instance_for_engine(id)` | Bind engine to an existing instance |
 | `stop_game(instanceId)` | Stop a running instance |
-| `execute_script(groovy)` | Eval Groovy against the live engine. Returns `{output, error}` |
+| `execute_script(groovy)` | Eval Groovy against the live engine |
 
-`execute_script` is **not sandboxed** — it's the same engine the Scriptboard
-hits, so a mutating script really mutates the running game. Treat it the
-way you'd treat typing into the Scriptboard.
+`execute_script` is **not sandboxed** — same engine the Scriptboard
+hits. Treat it like typing into the Scriptboard.
 
-### Per-session Breadboard subprocess
-
+### Spawner lifecycle
 | Tool | Purpose |
 |---|---|
-| `spawn_breadboard(repo_root?, admin_email?, admin_password?)` | Start a session-private Breadboard JVM (free port, own H2 db, own dev/ dir). Idempotent — returns existing metadata if one is already alive. Auto-runs orphan cleanup first. Also runs implicitly on the first tool call if no Breadboard is selected. |
-| `terminate_breadboard()` | Stop the spawned subprocess (graceful stop, then force-kill fallback on Unix; Windows uses `TerminateProcess` outright). Optional: atexit also fires this on MCP exit. |
-| `get_spawned_breadboard()` | Show url/port/pid/workdir/`alive` of the spawn (or null). |
-| `list_alive_breadboards()` | List externally-running Breadboards the MCP could attach to (currently: the `BREADBOARD_URL` env var if it responds). Spawns are excluded — they're session-private. |
-| `attach_breadboard(url?, email?, password?)` | Attach to a Breadboard. With `url`: explicit. Without: looks for one candidate via `list_alive_breadboards`; errors if 0, attaches if 1. Subsequent tool calls route to the attached URL. **Exclusive**: at most one MCP can be attached to a given Breadboard at a time (file lock under `~/.breadboard-mcp/attach-locks/`); attempts to attach to a URL that's already attached, or to another MCP's spawn URL, are refused with the holder's PID. The success response includes a warning to avoid manual use of the Breadboard while attached. |
-| `detach_breadboard()` | Clear an attach. Subsequent calls revert to spawn (or auto-spawn). |
-| `cleanup_orphan_breadboards(dry_run?)` | List orphan JVMs from sibling MCP processes that died abnormally (SIGKILL on Unix, crash, hard-terminate on Windows). **Defaults to `dry_run=True`** — just lists, doesn't kill. Pass `dry_run=False` to actually terminate them. Only kills JVMs whose owner MCP is dead; live spawns from other Claude/MCP sessions are preserved. |
+| `spawn_breadboard(...)` | Start a session-private JVM. Idempotent. Auto-runs orphan cleanup first. |
+| `terminate_breadboard()` | Stop the spawn (graceful → force-kill). Atexit also fires this. |
+| `get_spawned_breadboard()` | Current spawn's url/port/pid/workdir/alive (or null). |
+| `list_alive_breadboards()` | Externally-running Breadboards the MCP could attach to. |
+| `attach_breadboard(url?, email?, password?)` | Attach to a Breadboard. Exclusive (file lock). |
+| `detach_breadboard()` | Clear an attach. |
+| `cleanup_orphan_breadboards(dry_run?)` | List/kill JVMs whose owner MCP is dead. Defaults to `dry_run=True`. |
 
-Spawned instances live under `~/.breadboard-mcp/sessions/<id>/` (db/, dev/,
-logs/, RUNNING_PID, owner.pid, stdout.log). Workdirs are intentionally not
-auto-deleted after termination so you can inspect logs; clean them yourself
-when you're done. Override the parent dir with `BREADBOARD_MCP_SESSION_DIR`;
-override the staged binary path with `BREADBOARD_STAGED_BIN`.
-
-### Multiple Claude instances / worktrees
-
-The spawner is built for the case where you have one Claude Code session per
-git worktree, each running its own MCP server, each spawning its own
-Breadboard. Each spawn writes the MCP process's PID into the workdir as
-`owner.pid`. Cleanup logic considers a JVM "orphan" **only** when its
-recorded owner is dead — so the cleanup tool can run in any session and
-will never touch live spawns belonging to other live MCPs.
-
-Orphan reaping runs automatically:
-- At the start of every `spawn_breadboard()` call.
-- From the `atexit` handler when an MCP process exits cleanly.
-- On demand via the `cleanup_orphan_breadboards()` MCP tool or
-  `breadboard-mcp --cleanup-orphans` from the shell.
-
-If an MCP process is killed abruptly without running `atexit` (SIGKILL
-on Unix, hard-terminate on Windows), the JVM is orphaned until any of
-the above triggers reap it. Worst case: extra RAM use until the next
-session does anything.
-
-## Platform support
-
-macOS and Linux are first-class. Windows works with two behavior
-differences in the spawner; functionally everything else is the same.
-
-| Aspect | macOS / Linux | Windows |
-|---|---|---|
-| Staged binary | Invokes `target/universal/stage/bin/breadboard` (Unix shell script). | Invokes `target/universal/stage/bin/breadboard.bat`. Auto-detected. |
-| `groovy/` & `data/` linkage into per-session workdirs | **Symlink** (`os.symlink`). Edits to the source dirs are picked up live on next experiment reload. | **Recursive copy** (`shutil.copytree`). Each spawn gets a frozen snapshot at spawn time. Edits made *after* spawn require terminate + respawn to take effect. Why: Windows symlinks need admin or Developer Mode; junctions would work without elevation but require shelling out to `mklink /J`. Copy is simpler and the dirs are tiny (~130 KB on the default install). |
-| Process termination | `terminate_breadboard()` sends SIGTERM, waits 10s, escalates to SIGKILL. | `terminate_breadboard()` calls `TerminateProcess` (Python's cross-platform `Popen.terminate()`/`kill()`) which is already a hard kill — no escalation needed. |
-| Orphan cleanup | Sends SIGTERM, waits, escalates to SIGKILL if needed. | Sends `TerminateProcess` directly (single step). |
-
-If your `data/` directory grows large (multi-MB CSVs for big experiments)
-and you're spawning a lot of sessions on Windows, you may want to set
-`BREADBOARD_MCP_SESSION_DIR` to a fast SSD location to keep the
-per-spawn copy cheap.
+Spawn internals (workdir layout, orphan recovery semantics across
+multiple Claude sessions, cross-platform behavior) are documented in
+[`DEV_NOTES.md`](./DEV_NOTES.md).
 
 ## Installation
 
@@ -153,157 +103,78 @@ Requires Python 3.10+. Install into a venv with pip:
 ```bash
 cd mcp-server
 python -m venv .venv
-```
-
-Activate the venv:
-
-```bash
 source .venv/bin/activate          # macOS / Linux
 .venv\Scripts\activate             # Windows (cmd)
 .venv\Scripts\Activate.ps1         # Windows (PowerShell)
-```
-
-Then install:
-
-```bash
 pip install -e .
 ```
 
-With the venv activated, the `breadboard-mcp` command is now available.
+With the venv activated, the `breadboard-mcp` command is now on PATH.
 
 ## Configuration
 
-For spawn mode (the default) no env vars are needed — the spawner picks a
-port, seeds its own admin user (default `admin@example.com` / `admin123`),
-and the MCP routes tool calls to it automatically.
+Spawn mode (default) needs no env vars.
 
-For attach mode, `attach_breadboard(url=..., email=..., password=...)`
-takes the credentials directly. As a convenience, if `email` /
-`password` are omitted, these env vars are used as fallback:
+Attach mode reads these as fallbacks when `attach_breadboard()` is
+called without explicit args:
 
 | Variable | Meaning |
 |---|---|
-| `BREADBOARD_URL` | A pre-set attach candidate. If set and responding, it appears in `list_alive_breadboards`. |
+| `BREADBOARD_URL` | Attach candidate; appears in `list_alive_breadboards` if responding. |
 | `BREADBOARD_EMAIL` | Admin email fallback for `attach_breadboard()`. |
-| `BREADBOARD_PASSWORD` | Admin password fallback for `attach_breadboard()`. |
+| `BREADBOARD_PASSWORD` | Admin password fallback. |
 
-Optional spawn-mode overrides:
+Spawn-mode overrides (`BREADBOARD_STAGED_BIN`,
+`BREADBOARD_MCP_SESSION_DIR`) and platform-specific behavior are in
+[`DEV_NOTES.md`](./DEV_NOTES.md).
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `BREADBOARD_STAGED_BIN` | `<repo_root>/target/universal/stage/bin/breadboard` | Path to the staged Breadboard launcher script. |
-| `BREADBOARD_MCP_SESSION_DIR` | `~/.breadboard-mcp/sessions` | Parent directory for per-session workdirs. |
+## Wiring into Claude Code
 
-The server authenticates via `POST /debug/login` (JSON), not the legacy
-`POST /login` (form-based, broken on this build — see `DEV_NOTES.md`).
-
-## Running
-
-Standalone (stdio transport — the default MCP transport, mainly useful as
-a sanity check that `breadboard-mcp` is on PATH):
-
-```bash
-breadboard-mcp
-```
-
-## Wiring it into Claude Code
-
-Claude Code launches MCP servers from a context with no active venv, so the
-config has to point at the venv's `breadboard-mcp` binary by absolute path.
-There are two equivalent ways to set that up.
-
-### Option 1 (recommended): use `--print-claude-config`
-
-With the venv activated, run:
+Claude Code launches MCP servers without an active venv, so the config
+must point at the venv binary by absolute path. With the venv
+activated, run:
 
 ```bash
 breadboard-mcp --print-claude-config
 ```
 
-This prints a JSON block with the absolute path to the installed binary
-already filled in. Paste it into `~/.claude.json` (or merge it with your
-existing `mcpServers` section), then edit the `env` values to match your
-admin credentials.
+That prints a JSON block with the path already filled in. Merge it into
+your `~/.claude.json` `mcpServers` section, edit the `env` values, and
+restart Claude Code. On Windows the command auto-resolves to
+`breadboard-mcp.exe`.
 
-Example output:
-
-```json
-{
-  "mcpServers": {
-    "breadboard": {
-      "command": "/absolute/path/to/breadboard/mcp-server/.venv/bin/breadboard-mcp",
-      "env": {
-        "BREADBOARD_URL": "http://localhost:9000",
-        "BREADBOARD_EMAIL": "admin@example.com",
-        "BREADBOARD_PASSWORD": "..."
-      }
-    }
-  }
-}
-```
-
-On Windows the `command` ends in `.venv\Scripts\breadboard-mcp.exe` —
-`--print-claude-config` handles that automatically.
-
-### Option 2: use the Claude Code CLI
-
-If you have the `claude` CLI installed, no manual JSON editing is needed.
-With the venv activated:
-
-macOS / Linux:
-
-```bash
-claude mcp add breadboard "$(which breadboard-mcp)" \
-  --env BREADBOARD_URL=http://localhost:9000 \
-  --env BREADBOARD_EMAIL=admin@example.com \
-  --env BREADBOARD_PASSWORD=changeme
-```
-
-Windows (PowerShell):
-
-```powershell
-claude mcp add breadboard (Get-Command breadboard-mcp).Source `
-  --env BREADBOARD_URL=http://localhost:9000 `
-  --env BREADBOARD_EMAIL=admin@example.com `
-  --env BREADBOARD_PASSWORD=changeme
-```
-
-After either option, restart Claude Code. The 25 tools above appear under
-the `breadboard` MCP server.
+Alternative wiring via `claude mcp add` is in
+[`DEV_NOTES.md`](./DEV_NOTES.md).
 
 ## Typical debugging flow
 
-1. Start Breadboard from the staged binary (see `DEV_NOTES.md`).
-2. In Claude Code, ask things like:
-   - *"List my experiments and show me the source of the OnJoinStep in
-     experiment 33."* → `list_experiments`, `get_experiment(33)`
-   - *"Run experiment 33: bind the engine, launch a new instance, then
-     show me `g.V.count()` and the names of the registered steps."* →
-     `select_experiment_for_engine(33)`, `launch_game(...)`,
-     `execute_script(...)`
-   - *"In instance 47, what were the last 50 events with 'Choice' in the
-     name?"* → `get_instance_events(47, 50, 0, "Choice")`
+Ask Claude things like:
+- *"List my experiments and show me the source of the OnJoinStep in
+  experiment 33."* → `list_experiments`, `get_experiment(33)`
+- *"Run experiment 33: bind the engine, launch a new instance, then
+  show me `g.V.count()` and the registered steps."* →
+  `select_experiment_for_engine(33)`, `launch_game(...)`,
+  `execute_script(...)`
+- *"In instance 47, last 50 events with 'Choice' in the name?"* →
+  `get_instance_events(47, 50, 0, "Choice")`
 
 ## Simulating players
 
 See [`examples/simulate_players.py`](./examples/simulate_players.py) for
-a minimal, experiment-agnostic player simulator template, plus
-[`examples/README.md`](./examples/README.md) for the workflow to extend
-it for your experiment.
+a minimal, experiment-agnostic WebSocket player simulator, and
+[`examples/README.md`](./examples/README.md) for how to extend it.
 
 ## Limitations
 
-- **No browser.** The MCP drives the server, not the Vue client. If you
-  need to see what a real browser renders, run `npm run build` and use a
-  real browser alongside.
-- **One admin user / one classloader / one engine.** Concurrent debug
-  sessions for the same admin will interleave. Not a problem for a single
-  Claude session.
-- **Re-running `select_experiment_for_engine` rebuilds the engine** — any
-  previously-bound state (the `g` graph, in-flight timers) is wiped.
-- **Play 2.2 doesn't answer WS ping frames.** If you write a Python WS
-  client to simulate players, set `ping_interval=None` and rely on the
-  experiment's application-level heartbeat instead.
+- **No browser.** The MCP drives the server, not the Vue client.
+- **One admin user / one classloader / one engine** — concurrent debug
+  sessions for the same admin will interleave.
+- **`select_experiment_for_engine` rebuilds the engine** — previously-
+  bound state (the `g` graph, in-flight timers) is wiped.
+- **Play 2.2 doesn't answer WS ping frames.** Python WS simulators
+  must set `ping_interval=None` and rely on an application-level
+  heartbeat.
 
-See `DEV_NOTES.md` for build prereqs, the bugs this branch fixes, and the
-sbt + Java 8 + jfrog-mirror story.
+See [`DEV_NOTES.md`](./DEV_NOTES.md) for build prereqs, spawner
+internals, multi-session/orphan behavior, platform notes, and the bugs
+this branch fixes.
