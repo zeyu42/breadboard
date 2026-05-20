@@ -36,6 +36,22 @@ public class DebugController extends Controller {
       new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'");
 
   /**
+   * Idempotent schema fix for fresh databases: evolution 28 creates an
+   * empty `breadboard_version` table, which short-circuits
+   * Global.onStart()'s upgrade path so `experiments.file_mode` never
+   * gets added. Run this once on a freshly-spawned Breadboard before any
+   * /debug/* call that queries experiments. Safe to call multiple times.
+   */
+  public static Result bootstrapSchema() {
+    com.avaje.ebean.Ebean.createSqlUpdate(
+        "alter table experiments add column if not exists file_mode bit default 0;"
+    ).execute();
+    ObjectNode out = Json.newObject();
+    out.put("status", "ok");
+    return ok(out);
+  }
+
+  /**
    * JSON login: { "email": "...", "password": "..." } -> sets the Play
    * session cookie (uid, email) so subsequent /debug/* calls authenticate.
    *

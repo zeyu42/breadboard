@@ -40,7 +40,131 @@ POST /debug/launch-game                   { name, parameters? }          -> { ex
 POST /debug/select-instance               { instanceId }                 -> ok
 POST /debug/stop-game                     { instanceId }                 -> ok
 POST /debug/script                        { script }                     -> { output, error }
+POST /debug/bootstrap-schema                                             -> { status: "ok" }
 ```
+
+`/debug/bootstrap-schema` exists only because of an upstream Breadboard quirk
+(see "Per-session Breadboard spawner" below). It's idempotent and safe to
+call any time; the only situation it actually mutates anything is on a
+freshly-evolved DB that's never run `Global.onStart`'s pre-v2.3 upgrade path.
+
+## Per-session Breadboard spawner
+
+`mcp-server/src/breadboard_mcp/spawner.py` can launch its own Breadboard JVM
+with a free port, a session-private H2 database, and a session-private
+`dev/` directory. Useful for running two Claude Code sessions in parallel
+without racing on a shared Breadboard.
+
+### Workdir layout
+
+```
+~/.breadboard-mcp/sessions/<id>/
+├── db/                  -- H2 file (created by Play on first connect)
+├── dev/                 -- session-private file-mode experiment dir
+├── logs/                -- Play logs
+├── RUNNING_PID          -- written by Play, removed on graceful shutdown
+└── stdout.log           -- combined JVM stdout/stderr
+```
+
+The session dir is named with an 8-char uuid prefix. Override the parent
+with `BREADBOARD_MCP_SESSION_DIR`. Workdirs are NOT auto-deleted after
+termination so you can inspect logs; clean them up yourself.
+
+### JVM args we pass to the staged binary
+
+```
+-Dhttp.port=<port>
+-Dpidfile.path=<workdir>/RUNNING_PID
+-Ddb.default.url=jdbc:h2:file:<workdir>/db/breadboard;MODE=MYSQL
+-Duser.dir=<workdir>
+-DapplyEvolutions.default=true
+```
+
+The `-Duser.dir` override is the load-bearing one: the staged binary's
+launcher script (`target/universal/stage/bin/breadboard`) hardcodes its own
+`addJava "-Duser.dir=$(cd "${app_home}/.."; pwd -P)"` near the end of the
+script. Because that's prepended to `java_args` BEFORE our command-line
+`-D*` args, our override comes later on the JVM command line, and Java's
+last-D-wins semantics make ours stick. Verifiable with `ps -eo command`:
+
+```
+java ... -Duser.dir=/abs/stage -Duser.dir=/abs/workdir ...
+```
+
+`applyEvolutions.default=true` is required because the staged binary runs
+in PROD mode (`application.mode=PROD` in `application.conf`), where Play
+2.2 won't auto-apply evolutions without the explicit flag.
+
+### Why we need `/debug/bootstrap-schema`
+
+Evolution 28.sql creates an empty `breadboard_version` table. `Global.onStart`
+treats the presence of that table as "already migrated past v2.2," skipping
+the pre-v2.3 upgrade path — which is where `experiments.file_mode` would
+normally get added. Result: on a freshly-evolved DB, the `file_mode` column
+never exists, and any query that touches it (e.g. `/debug/experiments`,
+which Ebean joins through `users.owned_experiments`) blows up with
+`Column "T1.FILE_MODE" not found`.
+
+The user's existing dev DB doesn't hit this because it predates evolution
+28 — `Global.onStart` saw "no breadboard_version table" and ran the full
+upgrade, including adding `file_mode`. So this only bites on greenfield
+spawns.
+
+`DebugController.bootstrapSchema()` runs the missing
+`ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_mode BIT DEFAULT 0`.
+The spawner POSTs to it once after the server is ready, before doing
+anything else against the DB.
+
+### Admin user seeding
+
+After the server is ready and the schema is fixed, the spawner:
+
+1. `GET /languages` → find the English language id (Locale enumeration
+   order is JVM/OS-dependent, so we can't assume id=1).
+2. `POST /createFirstUser` with `{ email, password, defaultLanguageId }`.
+   Defaults are `admin@example.com` / `admin123`; override via
+   `spawn_breadboard(admin_email=..., admin_password=...)`. 200 means
+   created, 400 ("User table is not empty") means already seeded — both OK.
+
+The MCP client (`BreadboardClient` in `server._bb()`) then picks up the
+spawned URL + admin credentials automatically; subsequent tool calls
+route to the spawned instance.
+
+### Lifecycle
+
+- `spawn_breadboard()` is idempotent. If a previous spawn is still alive,
+  the call returns its metadata. If the previous JVM died, the dead state
+  is cleared and a fresh one is started.
+- `terminate_breadboard()` sends SIGTERM, waits 10s, falls back to
+  SIGKILL. Exit code 143 = clean SIGTERM shutdown.
+- The atexit handler in `spawner._atexit_cleanup` calls
+  `terminate_breadboard(timeout=5.0)` when the Python interpreter exits,
+  and then also runs `cleanup_orphans()` to sweep up dead siblings.
+
+### Orphan detection (SIGKILL / crash recovery)
+
+If the MCP Python process dies without running atexit (SIGKILL, segfault,
+host crash), the JVM subprocess becomes an orphan re-parented to PID 1.
+To recover:
+
+1. At spawn time, we write `<workdir>/owner.pid` containing the MCP's
+   `os.getpid()`. `terminate_breadboard()` deletes this file on clean
+   shutdown.
+2. `cleanup_orphans()` walks `~/.breadboard-mcp/sessions/*/` and, for
+   each session where `owner.pid` exists but the owner process is dead
+   AND `RUNNING_PID` is alive, sends SIGTERM (then SIGKILL after 5s) to
+   the JVM and removes the stale pid files. Sessions whose owner is
+   still alive are skipped — so this is safe to run in any MCP process
+   without disturbing sibling MCPs.
+3. Cleanup runs automatically at the start of every `spawn_breadboard()`
+   call and from the atexit handler. Manual triggers:
+   `cleanup_orphan_breadboards()` MCP tool, or
+   `breadboard-mcp --cleanup-orphans` CLI flag.
+
+PID reuse is a theoretical concern (if owner PID is reused by an
+unrelated process before cleanup runs, the JVM looks "owned" again and
+won't be reaped). In practice the window is small; if it bites, kill the
+JVM by hand from the RUNNING_PID file.
 
 ## Build / run recipe (modern macOS, fresh clone)
 

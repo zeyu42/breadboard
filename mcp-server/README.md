@@ -1,5 +1,11 @@
 # Breadboard MCP server
 
+> **Do not use in production.** Spawn mode seeds a hard-coded default admin
+> (`admin@example.com` / `admin123`) into each session-private Breadboard, the
+> `/debug/*` endpoints are not hardened against untrusted callers, and the
+> spawned JVM binds locally without TLS. This MCP is intended for local
+> development and debugging only.
+
 An [MCP](https://modelcontextprotocol.io) server that lets an LLM agent
 (e.g. Claude in Claude Code) **build, run, and debug Breadboard experiments
 through HTTP+JSON** — no clicking around the admin UI, no `npm run serve`.
@@ -29,7 +35,16 @@ routes). You **must** be running a build that contains those changes; see
 [`DEV_NOTES.md`](./DEV_NOTES.md) for the working build/run recipe (Java 8,
 `sbt stage` + staged binary, etc.).
 
-## Tools (18)
+## Two ways to use it
+
+| Mode | When | How |
+|---|---|---|
+| **Spawn** a session-private Breadboard | **Default.** First tool call auto-spawns a fresh JVM on a free port with its own H2 database. Best for parallel Claude Code sessions / worktrees that don't want to race on a shared server. | Either call `spawn_breadboard` explicitly, or just call any tool — the MCP auto-spawns transparently on first use. |
+| **Attach** to an existing Breadboard | You're already running a Breadboard (e.g. `./start`) and want the MCP to talk to it. | Call `attach_breadboard(url=...)`. With no `url` arg, the MCP looks for the Breadboard at the `BREADBOARD_URL` env var; if it responds, that becomes the attach target. Spawns are session-private — they're never auto-offered as attach candidates (each MCP owns its own). You can still attach to a spawn by passing its url explicitly. |
+
+Precedence: explicit attach > current spawn > auto-spawn.
+
+## Tools (25)
 
 ### Read-only inspection
 
@@ -68,6 +83,43 @@ routes). You **must** be running a build that contains those changes; see
 hits, so a mutating script really mutates the running game. Treat it the
 way you'd treat typing into the Scriptboard.
 
+### Per-session Breadboard subprocess
+
+| Tool | Purpose |
+|---|---|
+| `spawn_breadboard(repo_root?, admin_email?, admin_password?)` | Start a session-private Breadboard JVM (free port, own H2 db, own dev/ dir). Idempotent — returns existing metadata if one is already alive. Auto-runs orphan cleanup first. Also runs implicitly on the first tool call if no Breadboard is selected. |
+| `terminate_breadboard()` | Stop the spawned subprocess (SIGTERM → SIGKILL fallback). Optional: atexit also fires this on MCP exit. |
+| `get_spawned_breadboard()` | Show url/port/pid/workdir/`alive` of the spawn (or null). |
+| `list_alive_breadboards()` | List externally-running Breadboards the MCP could attach to (currently: the `BREADBOARD_URL` env var if it responds). Spawns are excluded — they're session-private. |
+| `attach_breadboard(url?, email?, password?)` | Attach to a Breadboard. With `url`: explicit. Without: looks for one candidate via `list_alive_breadboards`; errors if 0, attaches if 1. Subsequent tool calls route to the attached URL. **Exclusive**: at most one MCP can be attached to a given Breadboard at a time (file lock under `~/.breadboard-mcp/attach-locks/`); attempts to attach to a URL that's already attached, or to another MCP's spawn URL, are refused with the holder's PID. The success response includes a warning to avoid manual use of the Breadboard while attached. |
+| `detach_breadboard()` | Clear an attach. Subsequent calls revert to spawn (or auto-spawn). |
+| `cleanup_orphan_breadboards(dry_run?)` | List orphan JVMs from sibling MCP processes that died abnormally (SIGKILL, crash). **Defaults to `dry_run=True`** — just lists, doesn't kill. Pass `dry_run=False` to actually terminate them. Only kills JVMs whose owner MCP is dead; live spawns from other Claude/MCP sessions are preserved. |
+
+Spawned instances live under `~/.breadboard-mcp/sessions/<id>/` (db/, dev/,
+logs/, RUNNING_PID, owner.pid, stdout.log). Workdirs are intentionally not
+auto-deleted after termination so you can inspect logs; clean them yourself
+when you're done. Override the parent dir with `BREADBOARD_MCP_SESSION_DIR`;
+override the staged binary path with `BREADBOARD_STAGED_BIN`.
+
+### Multiple Claude instances / worktrees
+
+The spawner is built for the case where you have one Claude Code session per
+git worktree, each running its own MCP server, each spawning its own
+Breadboard. Each spawn writes the MCP process's PID into the workdir as
+`owner.pid`. Cleanup logic considers a JVM "orphan" **only** when its
+recorded owner is dead — so the cleanup tool can run in any session and
+will never touch live spawns belonging to other live MCPs.
+
+Orphan reaping runs automatically:
+- At the start of every `spawn_breadboard()` call.
+- From the `atexit` handler when an MCP process exits cleanly.
+- On demand via the `cleanup_orphan_breadboards()` MCP tool or
+  `breadboard-mcp --cleanup-orphans` from the shell.
+
+If an MCP process is SIGKILL'd (no `atexit` fires), the JVM is orphaned
+until any of the above triggers reap it. Worst case: extra RAM use until
+the next session does anything.
+
 ## Installation
 
 Requires Python 3.10+. Install into a venv with pip:
@@ -95,14 +147,26 @@ With the venv activated, the `breadboard-mcp` command is now available.
 
 ## Configuration
 
-Three environment variables. Copy `.env.example` or export them in the
-launching shell.
+For spawn mode (the default) no env vars are needed — the spawner picks a
+port, seeds its own admin user (default `admin@example.com` / `admin123`),
+and the MCP routes tool calls to it automatically.
+
+For attach mode, `attach_breadboard(url=..., email=..., password=...)`
+takes the credentials directly. As a convenience, if `email` /
+`password` are omitted, these env vars are used as fallback:
+
+| Variable | Meaning |
+|---|---|
+| `BREADBOARD_URL` | A pre-set attach candidate. If set and responding, it appears in `list_alive_breadboards`. |
+| `BREADBOARD_EMAIL` | Admin email fallback for `attach_breadboard()`. |
+| `BREADBOARD_PASSWORD` | Admin password fallback for `attach_breadboard()`. |
+
+Optional spawn-mode overrides:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `BREADBOARD_URL` | `http://localhost:9000` | Base URL of the Breadboard server |
-| `BREADBOARD_EMAIL` | _required_ | Admin email |
-| `BREADBOARD_PASSWORD` | _required_ | Admin password |
+| `BREADBOARD_STAGED_BIN` | `<repo_root>/target/universal/stage/bin/breadboard` | Path to the staged Breadboard launcher script. |
+| `BREADBOARD_MCP_SESSION_DIR` | `~/.breadboard-mcp/sessions` | Parent directory for per-session workdirs. |
 
 The server authenticates via `POST /debug/login` (JSON), not the legacy
 `POST /login` (form-based, broken on this build — see `DEV_NOTES.md`).

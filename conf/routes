@@ -93,6 +93,7 @@ GET         /logout                                                             
 POST        /saveUserSettings                                                    controllers.Application.saveUserSettings()
 
 # MCP debug endpoints (read-only experiment/instance/event inspection + sync script eval)
+POST        /debug/bootstrap-schema                                              controllers.DebugController.bootstrapSchema()
 POST        /debug/login                                                         controllers.DebugController.login()
 GET         /debug/experiments                                                   controllers.DebugController.listExperiments()
 GET         /debug/experiments/:experimentId                                     controllers.DebugController.getExperiment(experimentId: Long)
