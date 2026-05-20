@@ -24,15 +24,20 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+
+_IS_WINDOWS = sys.platform == "win32"
 
 
 _DEFAULT_SESSION_PARENT = Path.home() / ".breadboard-mcp" / "sessions"
@@ -64,7 +69,9 @@ def _staged_binary(repo_root: Path) -> Path:
     override = os.environ.get("BREADBOARD_STAGED_BIN")
     if override:
         return Path(override)
-    candidate = repo_root / "target" / "universal" / "stage" / "bin" / "breadboard"
+    # Play's `sbt stage` produces a Unix shell script + a `.bat` for Windows.
+    name = "breadboard.bat" if _IS_WINDOWS else "breadboard"
+    candidate = repo_root / "target" / "universal" / "stage" / "bin" / name
     if not candidate.exists():
         raise FileNotFoundError(
             f"Staged Breadboard binary not found at {candidate}. "
@@ -82,20 +89,25 @@ def _create_workdir(repo_root: Path) -> Path:
 
     # Several pieces of Breadboard and individual experiments read files
     # from paths relative to `user.dir` (which we override to the session
-    # workdir). Link the repo-root dirs they might need so those reads
-    # succeed:
+    # workdir). Link (or copy on Windows) the repo-root dirs they might
+    # need so those reads succeed:
     #   groovy/      - ScriptBoard.resetEngine reads the bundled scripts
     #                  (util/timer/graph/...) from `<user.dir>/groovy/`.
-    #   data/        - Experiment-specific data files. E.g. the two-door
-    #                  trust game's TreatmentManager.groovy reads
-    #                  `data/two-door/pilot-2.csv` to populate condition
-    #                  pools at engine startup.
-    # Add more here only when a real experiment is observed to fail.
+    #   data/        - Experiment-specific data files (e.g. CSV-driven
+    #                  treatment pools loaded at engine startup).
+    # On Windows we copy instead of symlinking — Windows symlinks require
+    # admin or Developer Mode, but junctions would require shelling out to
+    # `mklink /J`. Copy is simpler. Tradeoff: edits to the source dirs
+    # made mid-session won't be picked up until respawn.
     for name in ("groovy", "data"):
         src = repo_root / name
-        link = workdir / name
-        if src.is_dir() and not link.exists():
-            link.symlink_to(src)
+        dst = workdir / name
+        if not src.is_dir() or dst.exists():
+            continue
+        if _IS_WINDOWS:
+            shutil.copytree(src, dst)
+        else:
+            dst.symlink_to(src)
     return workdir
 
 
@@ -270,6 +282,9 @@ def cleanup_orphans(dry_run: bool = False) -> list[dict[str, Any]]:
         })
         if dry_run:
             continue
+        # On Windows, os.kill(pid, SIGTERM) maps to TerminateProcess —
+        # already a forceful kill, no SIGKILL escalation possible (or
+        # needed). On Unix, follow up with SIGKILL if SIGTERM is ignored.
         try:
             os.kill(jvm_pid, signal.SIGTERM)
             for _ in range(20):
@@ -277,7 +292,8 @@ def cleanup_orphans(dry_run: bool = False) -> list[dict[str, Any]]:
                     break
                 time.sleep(0.25)
             else:
-                os.kill(jvm_pid, signal.SIGKILL)
+                if not _IS_WINDOWS:
+                    os.kill(jvm_pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
         for f in ("owner.pid", "RUNNING_PID"):

@@ -88,12 +88,12 @@ way you'd treat typing into the Scriptboard.
 | Tool | Purpose |
 |---|---|
 | `spawn_breadboard(repo_root?, admin_email?, admin_password?)` | Start a session-private Breadboard JVM (free port, own H2 db, own dev/ dir). Idempotent — returns existing metadata if one is already alive. Auto-runs orphan cleanup first. Also runs implicitly on the first tool call if no Breadboard is selected. |
-| `terminate_breadboard()` | Stop the spawned subprocess (SIGTERM → SIGKILL fallback). Optional: atexit also fires this on MCP exit. |
+| `terminate_breadboard()` | Stop the spawned subprocess (graceful stop, then force-kill fallback on Unix; Windows uses `TerminateProcess` outright). Optional: atexit also fires this on MCP exit. |
 | `get_spawned_breadboard()` | Show url/port/pid/workdir/`alive` of the spawn (or null). |
 | `list_alive_breadboards()` | List externally-running Breadboards the MCP could attach to (currently: the `BREADBOARD_URL` env var if it responds). Spawns are excluded — they're session-private. |
 | `attach_breadboard(url?, email?, password?)` | Attach to a Breadboard. With `url`: explicit. Without: looks for one candidate via `list_alive_breadboards`; errors if 0, attaches if 1. Subsequent tool calls route to the attached URL. **Exclusive**: at most one MCP can be attached to a given Breadboard at a time (file lock under `~/.breadboard-mcp/attach-locks/`); attempts to attach to a URL that's already attached, or to another MCP's spawn URL, are refused with the holder's PID. The success response includes a warning to avoid manual use of the Breadboard while attached. |
 | `detach_breadboard()` | Clear an attach. Subsequent calls revert to spawn (or auto-spawn). |
-| `cleanup_orphan_breadboards(dry_run?)` | List orphan JVMs from sibling MCP processes that died abnormally (SIGKILL, crash). **Defaults to `dry_run=True`** — just lists, doesn't kill. Pass `dry_run=False` to actually terminate them. Only kills JVMs whose owner MCP is dead; live spawns from other Claude/MCP sessions are preserved. |
+| `cleanup_orphan_breadboards(dry_run?)` | List orphan JVMs from sibling MCP processes that died abnormally (SIGKILL on Unix, crash, hard-terminate on Windows). **Defaults to `dry_run=True`** — just lists, doesn't kill. Pass `dry_run=False` to actually terminate them. Only kills JVMs whose owner MCP is dead; live spawns from other Claude/MCP sessions are preserved. |
 
 Spawned instances live under `~/.breadboard-mcp/sessions/<id>/` (db/, dev/,
 logs/, RUNNING_PID, owner.pid, stdout.log). Workdirs are intentionally not
@@ -116,9 +116,27 @@ Orphan reaping runs automatically:
 - On demand via the `cleanup_orphan_breadboards()` MCP tool or
   `breadboard-mcp --cleanup-orphans` from the shell.
 
-If an MCP process is SIGKILL'd (no `atexit` fires), the JVM is orphaned
-until any of the above triggers reap it. Worst case: extra RAM use until
-the next session does anything.
+If an MCP process is killed abruptly without running `atexit` (SIGKILL
+on Unix, hard-terminate on Windows), the JVM is orphaned until any of
+the above triggers reap it. Worst case: extra RAM use until the next
+session does anything.
+
+## Platform support
+
+macOS and Linux are first-class. Windows works with two behavior
+differences in the spawner; functionally everything else is the same.
+
+| Aspect | macOS / Linux | Windows |
+|---|---|---|
+| Staged binary | Invokes `target/universal/stage/bin/breadboard` (Unix shell script). | Invokes `target/universal/stage/bin/breadboard.bat`. Auto-detected. |
+| `groovy/` & `data/` linkage into per-session workdirs | **Symlink** (`os.symlink`). Edits to the source dirs are picked up live on next experiment reload. | **Recursive copy** (`shutil.copytree`). Each spawn gets a frozen snapshot at spawn time. Edits made *after* spawn require terminate + respawn to take effect. Why: Windows symlinks need admin or Developer Mode; junctions would work without elevation but require shelling out to `mklink /J`. Copy is simpler and the dirs are tiny (~130 KB on the default install). |
+| Process termination | `terminate_breadboard()` sends SIGTERM, waits 10s, escalates to SIGKILL. | `terminate_breadboard()` calls `TerminateProcess` (Python's cross-platform `Popen.terminate()`/`kill()`) which is already a hard kill — no escalation needed. |
+| Orphan cleanup | Sends SIGTERM, waits, escalates to SIGKILL if needed. | Sends `TerminateProcess` directly (single step). |
+
+If your `data/` directory grows large (multi-MB CSVs for big experiments)
+and you're spawning a lot of sessions on Windows, you may want to set
+`BREADBOARD_MCP_SESSION_DIR` to a fast SSD location to keep the
+per-spawn copy cheap.
 
 ## Installation
 

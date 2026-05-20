@@ -130,13 +130,37 @@ The MCP client (`BreadboardClient` in `server._bb()`) then picks up the
 spawned URL + admin credentials automatically; subsequent tool calls
 route to the spawned instance.
 
+### Workdir linkage (groovy/, data/)
+
+Since `-Duser.dir` is overridden to the empty session workdir, several
+file reads relative to `user.dir` would fail unless we make those dirs
+visible inside the workdir:
+
+- `groovy/` — `ScriptBoard.resetEngine` reads bundled scripts
+  (`util.groovy`, `timer.groovy`, `graph.groovy`, ...) from
+  `<user.dir>/groovy/`.
+- `data/` — experiment-specific data files referenced from groovy code
+  with `data/...` paths.
+
+On **Unix** the spawner creates these as symlinks pointing back at the
+repo's `groovy/` and `data/` directories — live, no copy cost. On
+**Windows** it uses `shutil.copytree` instead, because Windows symlinks
+require admin/Developer-Mode privilege. The directories are small
+(~130 KB on the default install) so the per-spawn copy is negligible,
+but the snapshot is frozen: mid-session edits to the source aren't
+reflected until the spawn is terminated and respawned. Add more
+directories here only when an experiment is observed to need them.
+
 ### Lifecycle
 
 - `spawn_breadboard()` is idempotent. If a previous spawn is still alive,
   the call returns its metadata. If the previous JVM died, the dead state
   is cleared and a fresh one is started.
 - `terminate_breadboard()` sends SIGTERM, waits 10s, falls back to
-  SIGKILL. Exit code 143 = clean SIGTERM shutdown.
+  SIGKILL on Unix. Exit code 143 = clean SIGTERM shutdown. On Windows
+  `signal.SIGKILL` doesn't exist and `os.kill(pid, SIGTERM)` already maps
+  to `TerminateProcess` (a forceful kill), so the escalation step is a
+  no-op.
 - The atexit handler in `spawner._atexit_cleanup` calls
   `terminate_breadboard(timeout=5.0)` when the Python interpreter exits,
   and then also runs `cleanup_orphans()` to sweep up dead siblings.
@@ -152,7 +176,8 @@ To recover:
    shutdown.
 2. `cleanup_orphans()` walks `~/.breadboard-mcp/sessions/*/` and, for
    each session where `owner.pid` exists but the owner process is dead
-   AND `RUNNING_PID` is alive, sends SIGTERM (then SIGKILL after 5s) to
+   AND `RUNNING_PID` is alive, sends SIGTERM (then SIGKILL after 5s on
+   Unix; on Windows SIGTERM is already a hard kill so no escalation) to
    the JVM and removes the stale pid files. Sessions whose owner is
    still alive are skipped — so this is safe to run in any MCP process
    without disturbing sibling MCPs.
