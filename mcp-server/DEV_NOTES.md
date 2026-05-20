@@ -415,7 +415,7 @@ returns once the count hasn't changed for 1500ms (or 10s total
 elapses). Works in practice; could be made tighter by counting expected
 messages.
 
-## Walkthrough: drive the `two-door-trust-game` end-to-end
+## Walkthrough: drive an experiment end-to-end
 
 This is what the MCP can do that the existing tooling can't do in one
 shot. Setup:
@@ -434,11 +434,11 @@ rsync -a --exclude=node_modules --exclude=.git --exclude=.idea \
 #    to a small Python driver script.
 ```
 
-Expected output (trimmed) for an experiment id 41 named `TwoDoorTrustGame`:
+Expected output (trimmed) for an experiment id 41:
 
 ```
 # 4. sync_experiment_files(41, src='path/to/safe/copy/backend')
-  wrote 14 files to dev/TwoDoorTrustGame_41
+  wrote 14 files to dev/MyExperiment_41
 
 # 5. get_experiment(41) — steps loaded from disk
   fileMode: True

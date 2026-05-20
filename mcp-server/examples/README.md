@@ -62,8 +62,8 @@ handler body to see what fields it pulls from `data` — e.g.
   your events actually fired.
 - To see raw frames as they arrive, log `msg` inside `_read_loop`.
   Most experiment-specific state appears on the player's own vertex
-  (`v["tutorialStep"]`, `v["bdmReceived"]`, etc.) — extend `_absorb`
-  to pull it into Player attributes when you need to react to it.
+  under custom keys your groovy code sets on it — extend `_absorb` to
+  pull those into Player attributes when you need to react to them.
 - Live introspection works mid-run via the MCP's `execute_script`
   tool, e.g. `g.V.count()` or
   `g.V.findAll { it.step == "tutorial" }.collect { it.id }`.
