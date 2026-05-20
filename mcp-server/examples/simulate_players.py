@@ -3,19 +3,28 @@
 # requires-python = ">=3.10"
 # dependencies = ["websockets>=12"]
 # ///
-"""Minimal Breadboard player simulator — experiment-agnostic.
+"""Minimal Breadboard player simulator — experiment-agnostic starter.
 
 Connects N fake players to an already-launched experiment instance over
-WebSocket and drives them through the *universal* flow primitives:
+WebSocket. The script handles:
 
-  - heartbeat            (keeps OnJoinStep from kicking idle players)
-  - waiting-room:ready   (clears the ready-up window)
-  - aq:<...> answers     (resolves any ActionQueue waiting on a choice)
+  Universal (intrinsic to Breadboard):
+    - reading the player's `step` and pending choices from incoming
+      graph frames
+    - answering ActionQueue prompts (aq:<queueId>:<questionId>) — these
+      are exposed whenever your groovy code calls `a.add(...)`
+
+  Common conventions (NOT in the default v2.4 template, but common in
+  multiplayer experiments — included as defaults you may keep or strip):
+    - sends `heartbeat` every 5s (some experiments register a listener
+      in OnJoinStep that drops players that go silent — harmless no-op
+      otherwise)
+    - sends `waiting-room:ready` every 2s (clears the ready-up
+      one-shot listener, if your experiment has a waiting-room step)
 
 It does NOT handle experiment-specific events such as consent dialogs,
-tutorial page-flips, decision payloads, or post-game "continue" buttons —
-those vary per experiment. Add them yourself in `Player.handle_step()`
-(see the TODO marker).
+tutorial page-flips, decision payloads, or post-game "continue" buttons.
+Add those yourself in `Player.handle_step()` (see the TODO marker).
 
 Prerequisites:
   - Breadboard running and reachable at BREADBOARD_URL.
@@ -90,7 +99,11 @@ class Player:
                 ready.cancel()
 
     async def _heartbeat(self, ws) -> None:
-        # OnJoinStep's heartbeat-checker drops players that go silent.
+        # Convention, not framework: many multiplayer experiments add a
+        # `heartbeat` listener in OnJoinStep that drops players who go
+        # silent. Sending one every 5s keeps such experiments happy and
+        # is a harmless no-op when no listener is registered. Drop this
+        # task if your experiment uses a different keepalive scheme.
         try:
             while True:
                 await asyncio.sleep(5)
@@ -99,10 +112,12 @@ class Player:
             pass
 
     async def _ready(self, ws) -> None:
-        # The waiting room registers a one-shot `vertex.once` listener
-        # for `waiting-room:ready` only during its ready-up window.
-        # Spamming every 2s is safe: noop outside the window, single
-        # fire inside it.
+        # Convention, not framework: experiments that pair players via a
+        # waiting room typically register a one-shot `vertex.once`
+        # listener for `waiting-room:ready` during the ready-up window.
+        # Spamming every 2s is safe — noop outside the window, single
+        # fire inside it. The default v2.4 template has no waiting room,
+        # so this is a no-op there.
         try:
             while True:
                 await asyncio.sleep(2)

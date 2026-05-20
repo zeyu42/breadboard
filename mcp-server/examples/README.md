@@ -17,15 +17,23 @@ groovy code registered (e.g. via `player.on("foo", ...)` or
 
 ## What the example already handles
 
-These four are universal across Breadboard experiments and already
-wired in:
+**Universal** (intrinsic to Breadboard — these work for any experiment):
 
-- `heartbeat` every 5s — OnJoinStep's checker drops players that go silent.
-- `waiting-room:ready` every 2s — clears the one-shot ready-up listener.
-- `aq:<queueId>:<questionId>` answers — the ActionQueue protocol used by
-  every experiment that calls `a.add(...)`.
 - Reading the player's `step` and `_system.actionQueue` from incoming
   graph frames.
+- `aq:<queueId>:<questionId>` answers — the ActionQueue protocol the
+  framework uses whenever your groovy calls `a.add(...)`.
+
+**Common conventions** (not framework-level — included as defaults you
+may keep or strip depending on your experiment):
+
+- Sends `heartbeat` every 5s. Many multiplayer experiments add a
+  listener in OnJoinStep that drops players who go silent. Harmless
+  no-op if your experiment doesn't.
+- Sends `waiting-room:ready` every 2s. Experiments that pair players
+  via a waiting-room step typically expect this to clear a one-shot
+  ready-up listener. The default v2.4 template has no waiting room,
+  so this is a no-op there.
 
 ## Extending it for your experiment
 
