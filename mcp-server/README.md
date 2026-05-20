@@ -35,6 +35,14 @@ routes). You **must** be running a build that contains those changes; see
 [`DEV_NOTES.md`](./DEV_NOTES.md) for the working build/run recipe (Java 8,
 `sbt stage` + staged binary, etc.).
 
+The `/debug/*` endpoints are gated by `mcp.enabled` (default **off**) so a
+production Breadboard never exposes them by accident. Spawn mode passes
+`-Dmcp.enabled=true` to the JVM automatically. **Attach mode requires you
+to enable it yourself** — either set `mcp.enabled = true` in
+`conf/application.conf`, or start Breadboard with `-Dmcp.enabled=true`, or
+export `MCP_ENABLED=true` in the env. If you don't, every `/debug/*` call
+returns 404.
+
 ## Two ways to use it
 
 | Mode | When | How |

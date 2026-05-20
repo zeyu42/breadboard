@@ -28,7 +28,13 @@ import java.util.concurrent.TimeUnit;
  * can inspect experiments, instances and events as JSON, and (optionally)
  * evaluate Groovy in the running script engine.
  *
- * All endpoints require an authenticated admin session (use POST /login first).
+ * Authenticated endpoints (most of them) require an admin session (use POST
+ * /debug/login first). The whole controller is also gated by the `mcp.enabled`
+ * config flag — when unset or false (the default), every `/debug/*` request is
+ * intercepted in {@code Global.onRequest} and returned as 404, so the endpoints
+ * look like they don't exist on a production deployment. Enable per deploy via
+ * `mcp.enabled = true` in conf/application.conf or `-Dmcp.enabled=true` on the
+ * JVM; the MCP server's spawner does the latter automatically.
  */
 public class DebugController extends Controller {
 

@@ -18,6 +18,7 @@ JVM overrides:
     -Ddb.default.url=jdbc:h2:file:<workdir>/db/breadboard;MODE=MYSQL
     -Duser.dir=<workdir>             (overrides the script's own user.dir)
     -DapplyEvolutions.default=true   (auto-apply evolutions in PROD mode)
+    -Dmcp.enabled=true               (unlock /debug/* routes — off by default)
 """
 from __future__ import annotations
 
@@ -345,6 +346,10 @@ def spawn_breadboard(
         f"-Ddb.default.url=jdbc:h2:file:{workdir}/db/breadboard;MODE=MYSQL",
         f"-Duser.dir={workdir}",
         "-DapplyEvolutions.default=true",
+        # /debug/* routes are gated by Global.onRequest +
+        # Secured.onUnauthorized and return 404 unless this flag is set.
+        # Spawn mode always needs them on.
+        "-Dmcp.enabled=true",
     ]
     log_path = workdir / "stdout.log"
     log_fd = open(log_path, "w")

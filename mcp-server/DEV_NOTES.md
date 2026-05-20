@@ -78,6 +78,7 @@ termination so you can inspect logs; clean them up yourself.
 -Ddb.default.url=jdbc:h2:file:<workdir>/db/breadboard;MODE=MYSQL
 -Duser.dir=<workdir>
 -DapplyEvolutions.default=true
+-Dmcp.enabled=true
 ```
 
 The `-Duser.dir` override is the load-bearing one: the staged binary's
@@ -94,6 +95,28 @@ java ... -Duser.dir=/abs/stage -Duser.dir=/abs/workdir ...
 `applyEvolutions.default=true` is required because the staged binary runs
 in PROD mode (`application.mode=PROD` in `application.conf`), where Play
 2.2 won't auto-apply evolutions without the explicit flag.
+
+`mcp.enabled=true` unlocks the `/debug/*` routes. Gating happens in two
+places (one alone isn't enough — see below):
+
+1. **`Global.onRequest`** intercepts any request whose path starts with
+   `/debug/` and returns 404 if the flag isn't set. This catches the
+   unauthenticated routes (`/debug/login`, `/debug/bootstrap-schema`).
+2. **`Secured.onUnauthorized`** returns 404 instead of the usual 401
+   when an unauthenticated client hits a `/debug/*` route while the
+   flag is unset. This catches the authenticated routes.
+
+Why both: Play 2.2's action composition fires method-level annotations
+(including `@Security.Authenticated`) *before* the `onRequest`-supplied
+action, so without (2) any authenticated `/debug/*` route would leak a
+401 to scanners (telling them the endpoint exists) even though the gate
+is on. With both, every disabled `/debug/*` request looks like a 404,
+indistinguishable from a non-existent route.
+
+Spawn mode always needs the flag on, so the MCP spawner forces it via
+`-Dmcp.enabled=true` in the JVM args. Attach mode users who run
+Breadboard themselves must enable it in their own `application.conf`,
+pass the same `-D` flag, or export `MCP_ENABLED=true`.
 
 ### Why we need `/debug/bootstrap-schema`
 

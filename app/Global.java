@@ -12,6 +12,8 @@ import play.libs.F;
 import play.libs.Yaml;
 import play.mvc.Action;
 import play.mvc.Http;
+import play.mvc.Results;
+import play.mvc.SimpleResult;
 
 import java.io.*;
 import java.lang.reflect.Method;
@@ -186,6 +188,23 @@ public class Global extends GlobalSettings {
 
   @Override
   public Action onRequest(Http.Request request, Method actionMethod) {
+    // Gate the MCP debug surface: if `mcp.enabled` is not true, every
+    // `/debug/*` request is short-circuited to 404 here. This catches the
+    // unauthenticated routes (login, bootstrap-schema). The authenticated
+    // routes go through Secured.onUnauthorized for the same effect, since
+    // @Security.Authenticated fires before this action in Play 2.2's
+    // composition order.
+    if (request.path().startsWith("/debug/")) {
+      Boolean enabled = Play.application().configuration().getBoolean("mcp.enabled");
+      if (enabled == null || !enabled) {
+        return new Action.Simple() {
+          @Override
+          public F.Promise<SimpleResult> call(Http.Context ctx) {
+            return F.Promise.<SimpleResult>pure((SimpleResult) Results.notFound());
+          }
+        };
+      }
+    }
     return super.onRequest(request, actionMethod);
   }
 
