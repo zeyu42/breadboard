@@ -30,6 +30,7 @@ class BreadboardClient:
             base_url=self.base_url,
             timeout=timeout,
             follow_redirects=False,
+            trust_env=False,
         )
         self._logged_in = False
 
