@@ -49,15 +49,23 @@ Each match shows an `eventName` the server is listening for and the
 step that registered it. Add a branch in `handle_step()`:
 
 ```python
+TERMINAL_STEPS = {"finish", "finish-prolific", "results"}
+
 async def handle_step(self, ws) -> None:
     if self.step == "irb-consent":
         await self._emit(ws, "consent-irb", {})
     elif self.step == "tutorial":
         await self._emit(ws, "tutorial-next-page", {"current": 1})
-    elif self.step == "results":
-        await self._emit(ws, "results-complete", {})
-    elif self.step == "finish":
-        raise asyncio.CancelledError    # exits the run cleanly
+    elif self.step in TERMINAL_STEPS:
+        # If this terminal step expects a closing event, send it first.
+        if self.step == "results":
+            await self._emit(ws, "results-complete", {})
+        # Then close the socket; the read loop will exit on the next
+        # iteration. The Play 2.2 server may not echo a close frame,
+        # so `websockets` will log "no close frame received" — that's
+        # benign noise, not failure.
+        await ws.close()
+        return
 ```
 
 For events that carry a payload (decisions, quiz answers), read the

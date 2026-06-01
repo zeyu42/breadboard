@@ -18,3 +18,12 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/breadboard_mcp"]
+
+# docs/ and examples/ live at the project root for ergonomic file
+# layout (and they're served as MCP resources at runtime). Force-include
+# them into the wheel under the package directory so wheel installs
+# (not just editable installs from this checkout) can find them.
+[tool.hatch.build.targets.wheel.force-include]
+"docs" = "breadboard_mcp/_resources/docs"
+"examples" = "breadboard_mcp/_resources/examples"
+"DEV_NOTES.md" = "breadboard_mcp/_resources/DEV_NOTES.md"

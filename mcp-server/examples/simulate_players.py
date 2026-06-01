@@ -32,6 +32,18 @@ Prerequisites:
     launch_game tool or the admin UI).
   - Note its experiment id and instance id.
 
+IMPORTANT — BREADBOARD_URL must match the Breadboard you launched the
+instance in:
+  - If the MCP server auto-spawned a private Breadboard, the URL is
+    NOT localhost:9000 — it's a random port. Call the MCP tool
+    `get_spawned_breadboard` and use the `url` field. The default
+    here (localhost:9000) is convenient for attach-mode users with
+    their own Breadboard at the standard port and otherwise wrong.
+  - If a player connects to the wrong Breadboard, the WS handshake
+    succeeds against whatever's at that URL but the LogIn for an
+    unknown instance id silently goes nowhere — you'll see no graph
+    frames and no errors. Misleading. Double-check the URL first.
+
 Run:
   BREADBOARD_URL=http://localhost:9000 \
   EXPERIMENT_ID=1 INSTANCE_ID=1 NUM_PLAYERS=2 \
@@ -46,6 +58,7 @@ import time
 import uuid
 
 import websockets
+from websockets.exceptions import ConnectionClosed
 
 
 BB_URL = os.environ.get("BREADBOARD_URL", "http://localhost:9000")
@@ -73,6 +86,12 @@ class Player:
         self.log(f"connect → {url}")
         # ping_interval=None: Play 2.2 doesn't reply to WS pings; we keep
         # the connection alive with our own app-level heartbeat below.
+        # Note: Play 2.2 does not always send a WS close frame even
+        # when the server-side player has cleanly exited. The
+        # `websockets` library will log a warning ("no close frame
+        # received or sent") on shutdown — this is harmless and does
+        # NOT mean the run failed. Exit code 0 + a populated event log
+        # are the success signals.
         async with websockets.connect(url, ping_interval=None) as ws:
             # The first frame must be a LogIn. Fields beyond clientId are
             # recorded as session metadata server-side.
@@ -108,7 +127,10 @@ class Player:
             while True:
                 await asyncio.sleep(5)
                 await self._emit(ws, "heartbeat", {})
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ConnectionClosed):
+            # ConnectionClosed fires if the socket closed between
+            # sleeps (e.g. after handle_step did `await ws.close()`).
+            # Treat as a normal shutdown signal — same as Cancelled.
             pass
 
     async def _ready(self, ws) -> None:
@@ -122,7 +144,7 @@ class Player:
             while True:
                 await asyncio.sleep(2)
                 await self._emit(ws, "waiting-room:ready", {})
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, ConnectionClosed):
             pass
 
     async def _emit(self, ws, event_name: str, data: dict) -> None:
@@ -196,26 +218,61 @@ class Player:
         # a tutorial, `results-complete` after a results screen. Look
         # at the registered listeners in your experiment's groovy
         # files (search for `player.on(` / `vertex.once(`) and
-        # dispatch here. Example:
+        # dispatch here.
         #
-        #   if self.step == "results":
-        #       await self._emit(ws, "results-complete", {})
-        #   elif self.step == "finish":
-        #       # signal we're done; outer loop will exit on cancel
-        #       raise asyncio.CancelledError
+        # CLEAN TERMINATION. When the player reaches a terminal step
+        # (post-game survey, final results, "finish" / "finish-prolific"
+        # / similar), emit any required closing event then return to
+        # let the read loop fall out. Don't sit on a terminal step
+        # waiting for more frames — the server won't send any, and the
+        # outer asyncio.wait() will hang until RUN_SECONDS elapses.
+        # Pattern:
+        #
+        #   TERMINAL_STEPS = {"finish", "finish-prolific", "results"}
+        #
+        #   if self.step in TERMINAL_STEPS:
+        #       # If the terminal step expects a closing event, send it:
+        #       if self.step == "results":
+        #           await self._emit(ws, "results-complete", {})
+        #       # Close the socket so the read loop exits cleanly.
+        #       await ws.close()
+        #       return
         pass
 
 
 async def main() -> None:
     players = [Player(i) for i in range(NUM_PLAYERS)]
     print(f"# {NUM_PLAYERS} players, running up to {RUN_SECONDS}s")
-    tasks = [asyncio.create_task(p.run()) for p in players]
-    _done, pending = await asyncio.wait(
-        tasks, timeout=RUN_SECONDS, return_when=asyncio.ALL_COMPLETED,
-    )
-    for t in pending:
-        t.cancel()
+    # Stagger connects by 0.5s. When two players join in the same
+    # millisecond, OnJoinStep's add-player path sometimes races and the
+    # later player never receives the initial graph snapshot — its
+    # client just sits silent. Half a second between connects sidesteps
+    # the race without being noticeable in practice.
+    tasks = []
+    for p in players:
+        tasks.append(asyncio.create_task(p.run()))
+        await asyncio.sleep(0.5)
+    # gather(return_exceptions=True) keeps the asyncio bookkeeping
+    # tidy: every task's exception (or result) is retrieved, so the
+    # process won't print "Task exception was never retrieved" on GC.
+    # Wrap in wait_for to enforce the overall timeout.
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=RUN_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        for t in tasks:
+            t.cancel()
+        # Drain after cancel so exceptions don't go unretrieved.
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
     print(f"\n# final: {[(p.client_id, p.step) for p in players]}")
+    # Surface anything unexpected (ConnectionClosed is normal at
+    # shutdown — anything else is worth knowing about).
+    for p, r in zip(players, results):
+        if isinstance(r, Exception) and not isinstance(r, ConnectionClosed):
+            print(f"# {p.client_id} exited with: {type(r).__name__}: {r}")
 
 
 if __name__ == "__main__":
