@@ -105,7 +105,7 @@ public class DebugController extends Controller {
       ActorRef scriptBoardController = Akka.system().actorOf(new Props(ScriptBoard.class));
       Breadboard.instances.put(email, scriptBoardController);
       scriptBoardController.tell(
-          new Breadboard.AddAdmin(user, scriptBoardController, new NoopThrottledWebSocketOut()),
+          new Breadboard.AddAdmin(user, scriptBoardController, new NoopThrottledWebSocketOut(false)),
           null);
       actorCreated = true;
     }
