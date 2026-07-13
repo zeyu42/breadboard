@@ -242,12 +242,6 @@ class BreadboardClient:
         """Create + start a new ExperimentInstance of the currently-selected
         experiment, run all the steps. Returns once the actor settles or
         15s elapses."""
-        if self.get_current_selection().get("selectedExperiment"):
-            for experiment in self.list_experiments():
-                for instance in self.list_instances(experiment["id"]):
-                    if instance["status"] in ("RUNNING", "TESTING"):
-                        self.stop_game(instance["id"])
-
         body: dict = {"name": name}
         if parameters is not None:
             body["parameters"] = parameters

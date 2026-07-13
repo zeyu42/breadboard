@@ -63,10 +63,9 @@ Check with `get_current_selection`. Rebuild with
 state). Bind an instance with `launch_game` (creates a new one) or
 `select_instance_for_engine` (use an existing one).
 
-Only one experiment / one instance is bound at a time. Breadboard itself
-can RUN many instances concurrently, but MCP `launch_game` first stops
-every active instance owned by the admin so MCP-managed runs do not pile
-up with stale `RUNNING` statuses.
+Only one experiment / one instance is bound at a time. The server can
+RUN many instances concurrently, but `execute_script` only sees the
+currently-bound one.
 
 ## Canonical workflows
 

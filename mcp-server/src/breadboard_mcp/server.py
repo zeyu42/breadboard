@@ -637,10 +637,12 @@ def launch_game(name: str, parameters: dict | None = None) -> str:
     PRECONDITION: Call select_experiment_for_engine(id) first. Without
     a bound experiment, the engine has no step closures to register.
 
-    SIDE EFFECTS: Stops every RUNNING/TESTING instance owned by this
-    admin, re-runs every Step source into the engine, then creates and
-    binds a fresh ExperimentInstance. This MCP intentionally permits
-    only one active run at a time.
+    SIDE EFFECTS: Re-runs every Step source into the engine to attach
+    run/done closures, then creates a fresh ExperimentInstance and
+    binds it as the active one. Any prior in-flight instance bound to
+    the engine becomes inaccessible to execute_script (still RUNNING
+    on the server, but the engine's `g` now points at the new one —
+    use select_instance_for_engine to flip back).
 
     `name` is a label for the instance (shown in UI + data exports).
     `parameters` is an optional dict of run-time parameter overrides.
