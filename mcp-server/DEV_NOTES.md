@@ -74,6 +74,8 @@ termination so you can inspect logs; clean them up yourself.
 
 ```
 -Dhttp.port=<port>
+-Dbreadboard.rootUrl=http://127.0.0.1:<port>
+-Dbreadboard.wsUrl=ws://127.0.0.1:<port>/connect
 -Dpidfile.path=<workdir>/RUNNING_PID
 -Ddb.default.url=jdbc:h2:file:<workdir>/db/breadboard;MODE=MYSQL
 -Duser.dir=<workdir>

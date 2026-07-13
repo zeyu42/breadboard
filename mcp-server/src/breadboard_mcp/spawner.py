@@ -14,6 +14,8 @@ Per-session layout (under ~/.breadboard-mcp/sessions/<id>/):
 
 JVM overrides:
     -Dhttp.port=<picked>
+    -Dbreadboard.rootUrl=http://127.0.0.1:<picked>
+    -Dbreadboard.wsUrl=ws://127.0.0.1:<picked>/connect
     -Dpidfile.path=<workdir>/RUNNING_PID
     -Ddb.default.url=jdbc:h2:file:<workdir>/db/breadboard;MODE=MYSQL
     -Duser.dir=<workdir>             (overrides the script's own user.dir)
@@ -342,6 +344,8 @@ def spawn_breadboard(
     cmd = [
         str(binary),
         f"-Dhttp.port={port}",
+        f"-Dbreadboard.rootUrl=http://127.0.0.1:{port}",
+        f"-Dbreadboard.wsUrl=ws://127.0.0.1:{port}/connect",
         f"-Dpidfile.path={workdir}/RUNNING_PID",
         f"-Ddb.default.url=jdbc:h2:file:{workdir}/db/breadboard;MODE=MYSQL",
         f"-Duser.dir={workdir}",
