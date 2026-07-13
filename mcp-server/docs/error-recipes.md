@@ -49,6 +49,25 @@ null, call `select_experiment_for_engine(id)`. If
 `experimentInstanceId` is null, call `launch_game(...)` or
 `select_instance_for_engine(...)`.
 
+Also require `runtimeBindingVerified: true`; the saved selection alone
+does not prove EventTracker survived a restart. After a JVM restart,
+explicitly select the experiment and intended instance again before
+participants connect.
+
+This check protects against a deceptive partial failure: participant
+handlers can keep changing the in-memory graph (decisions, surveys,
+bonus values, and step state) while EventTracker silently writes
+nothing to H2. The UI can therefore look functional until the JVM
+stops and the graph disappears. Always verify the instance event log;
+live graph state is not evidence of persistence.
+
+### `stop_game` refuses an unrelated instance
+
+This is intentional. Breadboard clears its current instance selection
+when any instance is stopped, including an unrelated one. MCP will not
+trigger that bug. Never sweep all RUNNING/TESTING instances. If an old
+run must be stopped, bind and verify it first, then stop it.
+
 ### `g.V.count()` returns `==>0` right after `launch_game`
 
 **Not an error**. The graph is empty because no players have joined.

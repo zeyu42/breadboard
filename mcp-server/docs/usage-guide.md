@@ -63,9 +63,25 @@ Check with `get_current_selection`. Rebuild with
 state). Bind an instance with `launch_game` (creates a new one) or
 `select_instance_for_engine` (use an existing one).
 
+Require `runtimeBindingVerified: true` before participants connect.
+This field probes EventTracker in the live Groovy engine instead of
+trusting Breadboard's persisted selection. After every JVM restart,
+explicitly select the experiment and intended instance again, then
+verify this field.
+
+An unbound run can still look alive: participant handlers may update
+decisions, surveys, bonus values, and step state in the in-memory graph
+while EventTracker silently stores no H2 rows. Verify expected events
+through `get_instance_events`; graph/UI progress alone is insufficient.
+
 Only one experiment / one instance is bound at a time. The server can
 RUN many instances concurrently, but `execute_script` only sees the
 currently-bound one.
+
+Never sweep or stop unrelated RUNNING/TESTING instances. Breadboard's
+StopGame handler clears the current selection even when a different
+instance is stopped, so MCP `stop_game` refuses any id other than the
+verified runtime binding.
 
 ## Canonical workflows
 
@@ -92,6 +108,7 @@ stop_game(instance_id)
 ```
 select_experiment_for_engine(id)
 select_instance_for_engine(instance_id)
+get_current_selection()          # require runtimeBindingVerified: true
 execute_script(...)
 ```
 

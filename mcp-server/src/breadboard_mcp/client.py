@@ -116,7 +116,33 @@ class BreadboardClient:
         )
 
     def get_current_selection(self) -> dict:
-        return self._ok_json(self._request("GET", "/debug/selection"))
+        selection = self._ok_json(self._request("GET", "/debug/selection"))
+        experiment = selection.get("selectedExperiment")
+        instance_id = selection.get("experimentInstanceId")
+        selection["runtimeBindingVerified"] = bool(
+            experiment
+            and instance_id is not None
+            and self._runtime_binding_matches(experiment["id"], instance_id)
+        )
+        return selection
+
+    def _runtime_binding_matches(self, experiment_id: int, instance_id: int) -> bool:
+        probe = self.execute_script(
+            "def ei = eventTracker.getExperimentInstance(); "
+            f"ei != null && ei.id == {int(instance_id)}L "
+            f"&& ei.experiment?.id == {int(experiment_id)}L"
+        )
+        return not probe.get("error") and probe.get("output", "").rsplit("==>", 1)[-1].strip() == "true"
+
+    def _require_runtime_binding(self, experiment_id: int, instance_id: int) -> dict:
+        selection = self.get_current_selection()
+        if (selection.get("experimentInstanceId") != instance_id
+                or not selection["runtimeBindingVerified"]):
+            raise RuntimeError(
+                f"Breadboard did not bind experiment {experiment_id}, instance {instance_id}; "
+                f"current selection: {selection}"
+            )
+        return selection
 
     def set_selected_experiment(self, experiment_id: int) -> dict:
         return self._ok_json(
@@ -245,18 +271,36 @@ class BreadboardClient:
         body: dict = {"name": name}
         if parameters is not None:
             body["parameters"] = parameters
-        return self._ok_json(
+        experiment = self.get_current_selection().get("selectedExperiment")
+        result = self._ok_json(
             self._request("POST", "/debug/launch-game", json=body)
         )
+        if not experiment or result.get("experimentInstanceId") is None:
+            raise RuntimeError(f"Breadboard launch did not return a bound instance: {result}")
+        self._require_runtime_binding(experiment["id"], result["experimentInstanceId"])
+        return result
 
     def select_instance_for_engine(self, instance_id: int) -> dict:
         """Bind the script engine to an existing ExperimentInstance."""
-        return self._ok_json(
+        experiment = self.get_current_selection().get("selectedExperiment")
+        result = self._ok_json(
             self._request("POST", "/debug/select-instance",
                           json={"instanceId": instance_id})
         )
+        if not experiment:
+            raise RuntimeError("Select an experiment before binding an instance.")
+        self._require_runtime_binding(experiment["id"], instance_id)
+        return result
 
     def stop_game(self, instance_id: int) -> dict:
+        selection = self.get_current_selection()
+        if (selection.get("experimentInstanceId") != instance_id
+                or not selection["runtimeBindingVerified"]):
+            raise RuntimeError(
+                "Refusing to stop an instance that is not the verified runtime binding. "
+                "Breadboard clears the current instance selection even when stopping an "
+                "unrelated instance. Bind and verify the target instance first."
+            )
         return self._ok_json(
             self._request("POST", "/debug/stop-game",
                           json={"instanceId": instance_id})

@@ -75,6 +75,9 @@ mcp = FastMCP(
         "Only one experiment / one instance is bound at a time. Rebinding\n"
         "wipes prior engine state. If `get_current_selection` shows null\n"
         "for either, `execute_script` will return stale or empty bindings.\n\n"
+        "Never sweep or stop unrelated RUNNING/TESTING instances. Breadboard\n"
+        "clears its current selection when any instance is stopped. stop_game\n"
+        "therefore refuses targets other than the verified runtime binding.\n\n"
         "==================\n"
         "CANONICAL WORKFLOWS\n"
         "==================\n"
@@ -599,6 +602,11 @@ def get_current_selection() -> str:
     select_instance_for_engine(id). Without both, execute_script
     bindings (g, a, c, events, ...) will be missing or stale.
 
+    `runtimeBindingVerified` probes EventTracker inside the live Groovy
+    engine; require true before admitting participants. This matters after
+    a JVM restart because Breadboard's persisted selection can look valid
+    while the runtime tracker is unbound.
+
     Cheap and non-destructive. Safe to call any time as a status check.
     """
     return _pretty(_bb().get_current_selection())
@@ -646,7 +654,7 @@ def launch_game(name: str, parameters: dict | None = None) -> str:
 
     `name` is a label for the instance (shown in UI + data exports).
     `parameters` is an optional dict of run-time parameter overrides.
-    Returns once the actor settles or 15s elapses.
+    Returns only after a live EventTracker probe confirms the new instance.
     """
     return _pretty(_bb().launch_game(name, parameters))
 
@@ -664,6 +672,10 @@ def select_instance_for_engine(instance_id: int) -> str:
     PRECONDITION: Call select_experiment_for_engine(experiment_id)
     first so the engine has the step closures loaded. Without that,
     binding to an instance leaves the engine without code to run.
+
+    Returns only after a live EventTracker probe confirms this instance.
+    After every Breadboard restart, explicitly select the experiment and
+    intended instance again before allowing participants to connect.
     """
     return _pretty(_bb().select_instance_for_engine(instance_id))
 
@@ -677,6 +689,11 @@ def stop_game(instance_id: int) -> str:
     connected receive a stop signal. The instance's data and event log
     remain in the DB (still retrievable via get_instance_events /
     event_csv).
+
+    SAFETY: Refuses unless this id is the verified runtime binding. Never
+    use MCP to sweep unrelated RUNNING/TESTING instances; Breadboard's
+    StopGame handler would clear the actual current selection. To stop a
+    different instance, explicitly bind and verify it first.
 
     Does NOT terminate the Breadboard JVM — use terminate_breadboard
     for that. Does NOT delete the instance — data is preserved.
