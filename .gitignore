@@ -41,7 +41,3 @@ generated
 RUNNING_PID
 hs_err_pid*.log
 data
-
-# MCP server ships docs/ as resources — override the generic `docs` rule.
-!/mcp-server/docs/
-!/mcp-server/docs/**
